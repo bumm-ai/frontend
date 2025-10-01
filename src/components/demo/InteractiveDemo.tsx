@@ -13,7 +13,11 @@ import {
   User as UserIcon,
   FolderPlus,
   Eye,
-  Plus
+  Plus,
+  Play,
+  Square,
+  RotateCcw,
+  Hand
 } from 'lucide-react';
 import { CodeGenerationStages } from '../ui/CodeGenerationStages';
 import { BuildStages } from '../ui/BuildStages';
@@ -107,6 +111,64 @@ export default function InteractiveDemo() {
     credits: 1000
   });
 
+  // Auto demo state
+  const [isAutoDemo, setIsAutoDemo] = useState(false);
+  const [autoDemoStep, setAutoDemoStep] = useState(0);
+  const [isAutoDemoLoop, setIsAutoDemoLoop] = useState(true);
+  const autoDemoStopRef = useRef<boolean>(false);
+  const demoStateRef = useRef(demoState);
+  useEffect(() => { demoStateRef.current = demoState; }, [demoState]);
+
+  // Wait helper that resolves when checkFn returns true, or aborts on stop/timeout
+  const waitFor = (checkFn: () => boolean, intervalMs: number = 120, timeoutMs: number = 30000) => {
+    return new Promise<void>((resolve, reject) => {
+      const start = Date.now();
+      const interval = setInterval(() => {
+        if (autoDemoStopRef.current) {
+          clearInterval(interval);
+          // Silently resolve when auto demo is stopped to avoid unhandled rejections
+          return resolve();
+        }
+        if (checkFn()) {
+          clearInterval(interval);
+          return resolve();
+        }
+        if (Date.now() - start > timeoutMs) {
+          clearInterval(interval);
+          // Avoid breaking the loop on timeout; resolve gracefully
+          return resolve();
+        }
+      }, intervalMs);
+    });
+  };
+
+  // Clear Smart Contract Preview related localStorage to avoid stale code when switching modes
+  const clearSmartContractPreviewStorage = () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) || '';
+        if (
+          key.startsWith('bumm_contract_code_') ||
+          key.startsWith('bumm_contract_deployed_') ||
+          key.startsWith('bumm_deployed_contract_address_') ||
+          key.startsWith('bumm_deployment_date_') ||
+          key.startsWith('bumm_last_update_date_')
+        ) {
+          keysToRemove.push(key);
+        }
+      }
+      // Remove generic state keys as well
+      keysToRemove.push('bumm_action_button_state');
+      keysToRemove.push('bumm_current_project');
+
+      keysToRemove.forEach((key) => {
+        try { localStorage.removeItem(key); } catch {}
+      });
+    } catch {}
+  };
+
   const [isMainNet, setIsMainNet] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -114,10 +176,31 @@ export default function InteractiveDemo() {
   const [codeSource, setCodeSource] = useState<CodeSource>('empty');
   const [originalDeployedCode, setOriginalDeployedCode] = useState('');
   const [generationContext, setGenerationContext] = useState<string>('');
+  // Force remount of preview/editor to clear internal caches when switching modes
+  const [demoInstanceKey, setDemoInstanceKey] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mobileMessagesEndRef = useRef<HTMLDivElement>(null);
   const autoPlayTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { demoRef } = useGSAPAnimations();
+
+  // Compute highlight styles for action button during auto demo
+  const getAutoActionHighlightClasses = () => {
+    if (!isAutoDemo) return '';
+    if (autoDemoStopRef.current) return '';
+    if (autoDemoStep === 6) {
+      // Build highlight
+      return 'animate-pulse ring-2 ring-yellow-400 shadow-[0_0_0_4px_rgba(234,179,8,0.15)]';
+    }
+    if (autoDemoStep === 9) {
+      // Audit highlight
+      return 'animate-pulse ring-2 ring-blue-400 shadow-[0_0_0_4px_rgba(59,130,246,0.15)]';
+    }
+    if (autoDemoStep === 12) {
+      // Publish/Deploy highlight
+      return 'animate-pulse ring-2 ring-orange-400 shadow-[0_0_0_4px_rgba(249,115,22,0.15)]';
+    }
+    return '';
+  };
 
   // Welcome message on component mount
   useEffect(() => {
@@ -127,6 +210,21 @@ export default function InteractiveDemo() {
     }, 100);
 
     return () => clearTimeout(timer);
+  }, []);
+
+  // Start auto demo by default and loop until stopped or user interacts
+  useEffect(() => {
+    // Start only once on mount
+    setIsAutoDemo(true);
+    setIsAutoDemoLoop(true);
+    autoDemoStopRef.current = false;
+    // Always start on AI Chat for mobile
+    setMobileActiveTab('chat');
+    // slight delay to allow initial render
+    const t = setTimeout(() => {
+      startAutoDemo();
+    }, 400);
+    return () => clearTimeout(t);
   }, []);
 
   // Auto-scroll to bottom of messages - desktop version
@@ -314,6 +412,186 @@ export default function InteractiveDemo() {
     }));
   };
 
+  // Auto demo functions
+  const startAutoDemo = async () => {
+    // allow auto to run even after previous stop
+    autoDemoStopRef.current = false;
+    setIsAutoDemoLoop(true);
+    clearSmartContractPreviewStorage();
+    // bump instance key to remount preview/editor
+    setDemoInstanceKey(prev => prev + 1);
+    // ensure mobile starts at AI Chat tab when mode switches to auto
+    setMobileActiveTab('chat');
+    setIsAutoDemo(true);
+    setAutoDemoStep(0);
+    
+    // Reset state
+    setDemoState(prev => ({
+      ...prev,
+      messages: [],
+      currentProject: null,
+      projects: [],
+      generatedCode: '',
+      credits: 1000
+    }));
+    setContractCode('');
+
+    // Step 1: AI greeting
+    await new Promise(resolve => setTimeout(resolve, 800));
+    if (autoDemoStopRef.current) return;
+    addAIMessage("Hello! I can help you build on Solana. What would you like to build?", false);
+    setAutoDemoStep(1);
+
+    // Step 2: User request (English)
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    if (autoDemoStopRef.current) return;
+    addUserMessage("I want to create a simple DEX for token swaps");
+    setAutoDemoStep(2);
+
+    // Step 3: AI clarification (English)
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    if (autoDemoStopRef.current) return;
+    addAIMessage("Great choice! A few details to make it perfect:\n\n1) Swap fee (0.1-1%)?\n2) Should users be able to add liquidity?\n3) Should the owner collect protocol fees?", false);
+    setAutoDemoStep(3);
+
+    // Step 4: User provides parameters with activation phrase
+    await new Promise(resolve => setTimeout(resolve, 1400));
+    if (autoDemoStopRef.current) return;
+    const finalPrompt = "Create DEX contract with 0.3% fee, allow liquidity, owner collects fees";
+    addUserMessage(finalPrompt);
+    setAutoDemoStep(4);
+
+    // Step 5: AI confirmation uses same manual response helper
+    await new Promise(resolve => setTimeout(resolve, 900));
+    if (autoDemoStopRef.current) return;
+    const response = generateAIResponse(finalPrompt);
+    addAIMessage(response, false);
+    // If it's a generation command, trigger the same manual path
+    const input = finalPrompt.toLowerCase();
+    const isGenerationCommand = input.includes('create program') || 
+                                input.includes('create smart contract') ||
+                                input.includes('generate program') ||
+                                input.includes('build contract') ||
+                                input.includes('make dex') ||
+                                (input.includes('create') && (input.includes('contract') || input.includes('program') || input.includes('dex')));
+    if (isGenerationCommand) {
+      // set context to dex so editor generates appropriate code
+      setGenerationContext('dex');
+      await new Promise(resolve => setTimeout(resolve, 600));
+      if (autoDemoStopRef.current) return;
+      setDemoState(prev => ({ ...prev, isGenerating: true }));
+      // switch to Contract tab on mobile during generation
+      setMobileActiveTab('code');
+      generateCode();
+      createProject();
+    }
+    setAutoDemoStep(5);
+
+    // Wait for generation to complete naturally (CodeGenerationStages will call onComplete)
+    await waitFor(() => !demoStateRef.current.isGenerating);
+    if (autoDemoStopRef.current) return;
+
+    // Step 6: Show Build button highlight
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    setAutoDemoStep(6);
+
+    // Step 7: Auto Build
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    handleBuild();
+    setMobileActiveTab('code');
+    setAutoDemoStep(7);
+
+    // Wait for build to complete naturally
+    await waitFor(() => !demoStateRef.current.isBuilding);
+    if (autoDemoStopRef.current) return;
+    setAutoDemoStep(8);
+
+    // Step 9: Show Audit button highlight
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    setAutoDemoStep(9);
+
+    // Step 10: Auto Audit
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    handleAudit();
+    setMobileActiveTab('code');
+    setAutoDemoStep(10);
+
+    // Wait for audit to complete naturally
+    await waitFor(() => !demoStateRef.current.isAuditing);
+    if (autoDemoStopRef.current) return;
+    setAutoDemoStep(11);
+
+    // Step 12: Show Deploy button highlight
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    setAutoDemoStep(12);
+
+    // Step 13: Auto Deploy
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    handleDeploy();
+    setMobileActiveTab('code');
+    setAutoDemoStep(13);
+
+    // Wait for deploy to complete naturally
+    await waitFor(() => !demoStateRef.current.isDeploying);
+    if (autoDemoStopRef.current) return;
+    setAutoDemoStep(14);
+
+    // End demo
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (isAutoDemoLoop && !autoDemoStopRef.current) {
+      // loop again after short pause
+      setTimeout(() => {
+        if (!autoDemoStopRef.current) startAutoDemo();
+      }, 1500);
+    } else {
+      setIsAutoDemo(false);
+      setAutoDemoStep(0);
+    }
+  };
+
+  const stopAutoDemo = () => {
+    autoDemoStopRef.current = true;
+    setIsAutoDemo(false);
+    setAutoDemoStep(0);
+    setIsAutoDemoLoop(false);
+  };
+
+  // Switch to manual mode: fully reset chat, editor, and show welcome like fresh load
+  const switchToManualMode = () => {
+    stopAutoDemo();
+    clearSmartContractPreviewStorage();
+    // bump instance key to remount preview/editor
+    setDemoInstanceKey(prev => prev + 1);
+    // Always land on AI Chat on mobile after mode switch
+    setMobileActiveTab('chat');
+    setContractCode('');
+    setGenerationContext('');
+    setOriginalDeployedCode('');
+    setDemoState({
+      isAutoMode: true,
+      isPlaying: false,
+      currentStep: 0,
+      userInput: '',
+      messages: [],
+      currentProject: null,
+      projects: [],
+      generatedCode: '',
+      isGenerating: false,
+      isBuilding: false,
+      isAuditing: false,
+      isDeploying: false,
+      isReviewing: false,
+      credits: 1000
+    });
+    // show welcome after a short delay for consistency
+    setTimeout(() => {
+      addAIMessage('Hello! I can help you build on Solana — try commands like "create contract", "make gaming contract", "build DEX contract", "generate token contract", or "create NFT contract" to see the magic happen!', false);
+    }, 150);
+  };
+
   const handleManualInput = () => {
     if (!demoState.userInput.trim()) return;
 
@@ -461,6 +739,8 @@ export default function InteractiveDemo() {
       ...prev,
       messages: [...prev.messages, systemMessage]
     }));
+    // On mobile, show Contract tab during building
+    setMobileActiveTab('code');
   };
 
   const handleAudit = () => {
@@ -488,6 +768,8 @@ export default function InteractiveDemo() {
       ...prev,
       messages: [...prev.messages, systemMessage]
     }));
+    // On mobile, show Contract tab during auditing
+    setMobileActiveTab('code');
   };
 
   const handleDeploy = () => {
@@ -518,10 +800,12 @@ export default function InteractiveDemo() {
       ...prev,
       messages: [...prev.messages, systemMessage]
     }));
+    // On mobile, show Contract tab during deploy
+    setMobileActiveTab('code');
   };
 
   const handleUpgrade = () => {
-    // Start Deploy animation (та же что и при Publish)
+    // Start Deploy animation (same as Publish)
     setDemoState(prev => ({
       ...prev,
       isDeploying: true,
@@ -638,6 +922,9 @@ export default function InteractiveDemo() {
 
   const handleGenerationComplete = (code: string) => {
     // Code already updated via handleCodeChange
+    // Ensure editor receives the generated code so action buttons become enabled
+    setContractCode(code || '');
+    setCodeSource('ai-generated');
     setDemoState(prev => ({
       ...prev,
       isGenerating: false,
@@ -869,7 +1156,73 @@ export default function InteractiveDemo() {
       }}
     >
       
-      {/* Mobile Tabs - только на мобильных */}
+      {/* Auto Demo Control Panel */}
+      <div className="bg-[#0a0a0a] border-b border-[#191919] px-2 py-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={startAutoDemo}
+              disabled={isAutoDemo}
+              className={`relative overflow-hidden px-1.5 py-0.5 rounded text-[10px] transition-all flex items-center gap-1 ${
+                isAutoDemo 
+                  ? 'bg-transparent text-orange-300 border border-orange-500/40 cursor-not-allowed ring-1 ring-orange-500/30 shadow-[0_0_14px_rgba(255,102,51,0.25)]' 
+                  : 'bg-gradient-to-r from-orange-500 to-red-500 text-white hover:from-orange-600 hover:to-red-600'
+              }`}
+            >
+              {isAutoDemo ? (
+                <>
+                  <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-orange-500/10 to-transparent animate-pulse" />
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Running
+                </>
+              ) : (
+                <>
+                  <Play className="w-3 h-3" />
+                  Start
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={stopAutoDemo}
+              disabled={!isAutoDemo}
+              className={`px-1.5 py-0.5 rounded text-[10px] transition-all flex items-center gap-1 ${
+                !isAutoDemo 
+                  ? 'bg-gray-600 text-gray-300 cursor-not-allowed' 
+                  : 'bg-transparent text-red-500 border border-red-500 hover:bg-red-500 hover:text-white'
+              }`}
+            >
+              <Square className="w-3 h-3" />
+              Stop
+            </button>
+
+            <button
+              onClick={switchToManualMode}
+              className={`relative overflow-hidden px-1.5 py-0.5 rounded text-[10px] transition-all flex items-center gap-1 ${
+                !isAutoDemo
+                  ? 'bg-transparent text-blue-400 border border-blue-500/50 ring-1 ring-blue-500/30 shadow-[0_0_14px_rgba(59,130,246,0.25)]'
+                  : 'bg-transparent text-orange-500 border border-orange-500 hover:bg-orange-500 hover:text-white'
+              }`}
+            >
+              {!isAutoDemo && (
+                <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-blue-500/10 to-transparent animate-pulse" />
+              )}
+              <Hand className={`w-3 h-3 ${!isAutoDemo ? 'animate-bounce' : ''}`} />
+              Manual mode
+            </button>
+          </div>
+
+          {/* Compact status indicator */}
+          {isAutoDemo && (
+            <div className="flex items-center gap-2 text-xs text-orange-500">
+              <div className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse"></div>
+              <span>Auto Demo</span>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Mobile Tabs - mobile only */}
       <div className="md:hidden h-[40px] bg-[#191919] border-b border-[#333] flex flex-shrink-0">
         <button 
           onClick={() => setMobileActiveTab('chat')}
@@ -910,7 +1263,7 @@ export default function InteractiveDemo() {
         </button>
       </div>
       
-      {/* Main Content - идентичный основному дашборду */}
+      {/* Main Content - identical to main dashboard */}
       <main className="hidden md:flex h-[660px]">
         {/* Left Sidebar - AI Agent Chat (40%) */}
         <div className="w-[40%] bg-[#0a0a0a] border-r border-[#191919] flex flex-col">
@@ -1002,7 +1355,7 @@ export default function InteractiveDemo() {
         </div>
 
         {/* Middle Column - Smart Contract Preview (40%) */}
-        <div className="w-[40%] flex flex-col">
+        <div key={`preview-desktop-${demoInstanceKey}`} className="w-[40%] flex flex-col">
           {/* Code Header */}
           <div className="bg-[#0a0a0a] border-b border-[#191919] p-3">
             <div className="flex items-center gap-2">
@@ -1013,7 +1366,7 @@ export default function InteractiveDemo() {
           
           {/* Code Content */}
           <div className="flex-1 overflow-y-auto bg-[#0a0a0a] p-4 relative min-h-0">
-            {/* Анимации заменяют InteractiveCodeEditor */}
+            {/* Animations replace InteractiveCodeEditor */}
             {demoState.isBuilding && (
               <BuildStages 
                   isBuilding={demoState.isBuilding}
@@ -1143,9 +1496,10 @@ export default function InteractiveDemo() {
                   />
             )}
             
-            {/* InteractiveCodeEditor - показывается только когда нет анимаций */}
+            {/* InteractiveCodeEditor - shown only when no animations */}
             {!demoState.isBuilding && !demoState.isAuditing && !demoState.isDeploying && (
               <InteractiveCodeEditor
+                key={`editor-desktop-${demoInstanceKey}`}
                 initialCode={contractCode}
                 onCodeChange={handleCodeChange}
                 isGenerating={demoState.isGenerating}
@@ -1179,17 +1533,17 @@ export default function InteractiveDemo() {
                   <div>Address: ExampleContract123...ABC</div>
                 </div>
               ) : (
-                <p className="text-xs text-[#666]">This preview updates as you chat with AI agents.</p>
+                <p className="text-[9px] text-[#666]">This preview updates as you chat with AI agents.</p>
               )}
               <button 
-                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 text-xs ${
+                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 text-xs ${getAutoActionHighlightClasses()} ${
                   // Upgrade button for deployed contracts with changes
                   demoState.currentProject?.status === 'deployed' && contractCode.trim() && contractCode !== originalDeployedCode
                     ? 'bg-orange-500 text-white hover:bg-orange-600'
                     : // Review button for user-input code (only if not deployed)
                     codeSource === 'user-input' && contractCode.trim() && demoState.currentProject?.status !== 'deployed'
                     ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : demoState.currentProject?.status === 'generated' && contractCode.trim()
+                    : demoState.currentProject?.status === 'generated'
                     ? 'bg-yellow-600 text-white hover:bg-yellow-700'
                     : demoState.currentProject?.status === 'built'
                     ? 'bg-blue-600 text-white hover:bg-blue-700'
@@ -1197,7 +1551,7 @@ export default function InteractiveDemo() {
                     ? 'bg-orange-500 text-white hover:bg-orange-600'
                     : 'bg-orange-500/30 text-orange-300 cursor-not-allowed'
                 }`}
-                disabled={!contractCode.trim() || demoState.isBuilding || demoState.isAuditing || demoState.isDeploying || demoState.isReviewing}
+                disabled={demoState.isBuilding || demoState.isAuditing || demoState.isDeploying || demoState.isReviewing}
                 onClick={() => {
                   if (demoState.currentProject?.status === 'deployed' && contractCode.trim() && contractCode !== originalDeployedCode) {
                     handleUpgrade();
@@ -1426,10 +1780,10 @@ export default function InteractiveDemo() {
         </div>
       </main>
 
-      {/* Mobile Layout - абсолютное позиционирование для мобильных */}
+      {/* Mobile Layout - absolute positioning for mobile */}
       <div className="md:hidden h-[620px] relative overflow-x-hidden">
         
-        {/* AI Agent Chat - мобильная версия */}
+        {/* AI Agent Chat - mobile version */}
         <div className={`absolute inset-0 flex flex-col bg-[#0C0C0C] border border-[#333] rounded overflow-x-hidden ${
           mobileActiveTab === 'chat' ? 'block' : 'hidden'
         }`}>
@@ -1515,8 +1869,8 @@ export default function InteractiveDemo() {
           </div>
         </div>
 
-        {/* Smart Contract Preview - мобильная версия */}
-        <div className={`absolute inset-0 flex flex-col bg-[#0A0A0A] border border-[#333] rounded overflow-x-hidden ${
+        {/* Smart Contract Preview - mobile version */}
+        <div key={`preview-mobile-${demoInstanceKey}`} className={`absolute inset-0 flex flex-col bg-[#0A0A0A] border border-[#333] rounded overflow-x-hidden ${
           mobileActiveTab === 'code' ? 'block' : 'hidden'
         }`}>
           {/* Fixed Header */}
@@ -1555,6 +1909,7 @@ export default function InteractiveDemo() {
               />
             ) : (
               <InteractiveCodeEditor
+                key={`editor-mobile-${demoInstanceKey}`}
                 initialCode={contractCode}
                 onCodeChange={handleCodeChange}
                 isGenerating={demoState.isGenerating}
@@ -1588,17 +1943,17 @@ export default function InteractiveDemo() {
                   <div>Address: ExampleContract123...ABC</div>
                 </div>
               ) : (
-                <p className="text-xs text-[#666]">This preview updates as you chat with AI agents.</p>
+                <p className="text-[9px] text-[#666]">This preview updates as you chat with AI agents.</p>
               )}
               <button 
-                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 text-xs ${
+                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 text-xs ${getAutoActionHighlightClasses()} ${
                   // Upgrade button for deployed contracts with changes
                   demoState.currentProject?.status === 'deployed' && contractCode.trim() && contractCode !== originalDeployedCode
                     ? 'bg-orange-500 text-white hover:bg-orange-600'
                     : // Review button for user-input code (only if not deployed)
                     codeSource === 'user-input' && contractCode.trim() && demoState.currentProject?.status !== 'deployed'
                     ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : demoState.currentProject?.status === 'generated' && contractCode.trim()
+                    : demoState.currentProject?.status === 'generated'
                     ? 'bg-yellow-600 text-white hover:bg-yellow-700'
                     : demoState.currentProject?.status === 'built'
                     ? 'bg-blue-600 text-white hover:bg-blue-700'
@@ -1606,7 +1961,7 @@ export default function InteractiveDemo() {
                     ? 'bg-orange-500 text-white hover:bg-orange-600'
                     : 'bg-orange-500/30 text-orange-300 cursor-not-allowed'
                 }`}
-                disabled={!contractCode.trim() || demoState.isBuilding || demoState.isAuditing || demoState.isDeploying || demoState.isReviewing}
+                disabled={demoState.isBuilding || demoState.isAuditing || demoState.isDeploying || demoState.isReviewing}
                 onClick={() => {
                   if (demoState.currentProject?.status === 'deployed' && contractCode.trim() && contractCode !== originalDeployedCode) {
                     handleUpgrade();
@@ -1621,7 +1976,22 @@ export default function InteractiveDemo() {
                   }
                 }}
               >
-                {demoState.isReviewing ? (
+                {demoState.isBuilding ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Building...
+                  </>
+                ) : demoState.isAuditing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Auditing...
+                  </>
+                ) : demoState.isDeploying ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Deploying...
+                  </>
+                ) : demoState.isReviewing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
                     Reviewing...
@@ -1662,7 +2032,7 @@ export default function InteractiveDemo() {
           </div>
         </div>
 
-        {/* Network Panel - мобильная версия */}
+        {/* Network Panel - mobile version */}
         <div className={`absolute inset-0 overflow-x-hidden ${
           mobileActiveTab === 'network' ? 'block' : 'hidden'
         }`}>
