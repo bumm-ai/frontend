@@ -38,10 +38,36 @@ export default function Footer() {
             </motion.a>
           </div>
 
-          {/* Center - Copyright (всегда по центру) */}
+          {/* Center - Copyright and Legal Links */}
           <div className="text-center flex-1 md:flex-initial">
-            <div className="text-xs md:text-sm text-gray-400 mb-1">
+            <div className="text-xs md:text-sm text-gray-400 mb-2">
               AI-powered code generation and deployment on Solana
+            </div>
+            <div className="flex flex-wrap justify-center gap-4 mb-2">
+              <motion.a
+                href="/terms"
+                className="text-xs text-gray-500 hover:text-orange-500 transition-colors"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                Terms of Service
+              </motion.a>
+              <motion.a
+                href="/privacy"
+                className="text-xs text-gray-500 hover:text-orange-500 transition-colors"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                Privacy Policy
+              </motion.a>
+              <motion.a
+                href="/cookies"
+                className="text-xs text-gray-500 hover:text-orange-500 transition-colors"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                Cookie Policy
+              </motion.a>
             </div>
             <div className="text-xs text-gray-500">
               © 2025 Bumm.io
