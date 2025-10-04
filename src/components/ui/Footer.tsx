@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { FileText, Shield, Cookie } from 'lucide-react';
 
 export default function Footer() {
   return (
@@ -46,26 +47,29 @@ export default function Footer() {
             <div className="flex flex-wrap justify-center gap-4 mb-2">
               <motion.a
                 href="/terms"
-                className="text-xs text-gray-500 hover:text-orange-500 transition-colors"
+                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-orange-500 transition-colors"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
+                <FileText className="w-3 h-3" />
                 Terms of Service
               </motion.a>
               <motion.a
                 href="/privacy"
-                className="text-xs text-gray-500 hover:text-orange-500 transition-colors"
+                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-orange-500 transition-colors"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
+                <Shield className="w-3 h-3" />
                 Privacy Policy
               </motion.a>
               <motion.a
                 href="/cookies"
-                className="text-xs text-gray-500 hover:text-orange-500 transition-colors"
+                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-orange-500 transition-colors"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
+                <Cookie className="w-3 h-3" />
                 Cookie Policy
               </motion.a>
             </div>

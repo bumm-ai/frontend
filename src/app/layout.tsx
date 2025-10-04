@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SolanaWalletProvider } from "@/components/providers/WalletProvider";
 import { GoogleTagManager, GoogleTagManagerNoScript } from "@/components/analytics/GoogleTagManager";
+import { CookieBanner } from "@/components/ui/CookieBanner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -51,6 +52,7 @@ export default function RootLayout({
         <GoogleTagManagerNoScript />
         <SolanaWalletProvider>
           {children}
+          <CookieBanner />
         </SolanaWalletProvider>
       </body>
     </html>
