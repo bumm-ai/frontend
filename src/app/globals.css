@@ -356,3 +356,20 @@ body {
     font-size: 0.75rem !important;
   }
 }
+
+/* Mobile input focus stabilization */
+@media (max-width: 768px) {
+  input[type="text"] {
+    font-size: 16px !important;
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+  }
+  
+  input[type="text"]:focus {
+    font-size: 16px !important;
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+  }
+}

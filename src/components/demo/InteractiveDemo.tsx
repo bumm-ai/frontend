@@ -78,6 +78,9 @@ export default function InteractiveDemo() {
   // State for mobile tab
   const [mobileActiveTab, setMobileActiveTab] = useState<'chat' | 'code' | 'network'>('chat');
   const [isTablet, setIsTablet] = useState(false);
+  
+  // Ref for mobile input focus
+  const mobileInputRef = useRef<HTMLInputElement>(null);
 
   // Determine if device is tablet
   useEffect(() => {
@@ -1846,10 +1849,22 @@ export default function InteractiveDemo() {
           <div className="border-t border-[#191919] p-2">
             <div className="flex gap-2">
               <input
+                ref={mobileInputRef}
                 type="text"
                 value={demoState.userInput}
                 onChange={(e) => setDemoState(prev => ({ ...prev, userInput: e.target.value }))}
                 onKeyPress={(e) => e.key === 'Enter' && handleManualInput()}
+                onFocus={(e) => {
+                  // Prevent mobile browser from zooming
+                  e.target.style.fontSize = '16px';
+                  setTimeout(() => {
+                    e.target.style.fontSize = isTablet ? '9px' : '12px';
+                  }, 100);
+                }}
+                onBlur={(e) => {
+                  // Restore original font size
+                  e.target.style.fontSize = isTablet ? '9px' : '12px';
+                }}
                 placeholder="Describe your smart contract requirements..."
                 className={`flex-1 px-3 py-1.5 bg-[#191919] border border-[#333] rounded-lg text-white placeholder-[#666] focus:outline-none focus:border-orange-500 text-xs ${isTablet ? 'text-[9px] px-2 py-1' : ''}`}
                 disabled={demoState.isGenerating}
