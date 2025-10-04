@@ -69,6 +69,118 @@ const DEMO_STEPS = [
   { id: 'actions_available', label: 'Actions Available', duration: 2000 }
 ];
 
+// User-provided smart contract for second scenario
+const USER_CONTRACT_CODE = `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC20/IERC20.sol";
+
+/**
+ * @title SimpleStakingPool
+ * @dev A simple contract where users can stake one ERC20 token to earn another.
+ * This is a simplified educational example and is NOT production-ready.
+ */
+contract SimpleStakingPool {
+    IERC20 public stakingToken;
+    IERC20 public rewardToken;
+
+    address public owner;
+
+    uint256 public rewardRate; // Amount of reward tokens per second
+    uint256 public lastUpdateTime;
+    uint256 public rewardPerTokenStored;
+
+    mapping(address => uint256) public stakedBalances;
+    mapping(address => uint256) public userRewardPerTokenPaid;
+    mapping(address => uint256) public rewards;
+
+    uint256 public totalStaked;
+
+    event Staked(address indexed user, uint256 amount);
+    event Withdrawn(address indexed user, uint256 amount);
+    event RewardPaid(address indexed user, uint256 reward);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not the owner");
+        _;
+    }
+
+    modifier updateReward(address _user) {
+        rewardPerTokenStored = rewardPerToken();
+        lastUpdateTime = block.timestamp;
+        rewards[_user] = earned(_user);
+        userRewardPerTokenPaid[_user] = rewardPerTokenStored;
+        _;
+    }
+
+    constructor(address _stakingTokenAddress, address _rewardTokenAddress) {
+        owner = msg.sender;
+        stakingToken = IERC20(_stakingTokenAddress);
+        rewardToken = IERC20(_rewardTokenAddress);
+    }
+
+    // --- Core Logic ---
+
+    function rewardPerToken() public view returns (uint256) {
+        if (totalStaked == 0) {
+            return rewardPerTokenStored;
+        }
+        return
+            rewardPerTokenStored +
+            (((block.timestamp - lastUpdateTime) * rewardRate * 1e18) /
+                totalStaked);
+    }
+
+    function earned(address _user) public view returns (uint256) {
+        return
+            ((stakedBalances[_user] *
+                (rewardPerToken() - userRewardPerTokenPaid[_user])) / 1e18) +
+            rewards[_user];
+    }
+
+    // --- User Functions ---
+
+    function deposit(uint256 _amount) external updateReward(msg.sender) {
+        require(_amount > 0, "Amount must be greater than 0");
+        stakingToken.transferFrom(msg.sender, address(this), _amount);
+        stakedBalances[msg.sender] += _amount;
+        totalStaked += _amount;
+        emit Staked(msg.sender, _amount);
+    }
+
+    function withdraw(uint256 _amount) external updateReward(msg.sender) {
+        require(_amount > 0, "Amount must be greater than 0");
+        require(stakedBalances[msg.sender] >= _amount, "Insufficient balance");
+        stakingToken.transfer(msg.sender, _amount);
+        stakedBalances[msg.sender] -= _amount;
+        totalStaked -= _amount;
+        emit Withdrawn(msg.sender, _amount);
+    }
+
+    function claimReward() external updateReward(msg.sender) {
+        uint256 reward = rewards[msg.sender];
+        if (reward > 0) {
+            rewards[msg.sender] = 0;
+            rewardToken.transfer(msg.sender, reward);
+            emit RewardPaid(msg.sender, reward);
+        }
+    }
+
+    // --- Admin Functions ---
+
+    function setRewardRate(uint256 _newRate) external onlyOwner {
+        // Before setting a new rate, update the rewards to the current point in time
+        rewardPerTokenStored = rewardPerToken();
+        lastUpdateTime = block.timestamp;
+        rewardRate = _newRate;
+    }
+
+    // Function to add reward tokens to the contract
+    function addRewardTokens(uint256 _amount) external onlyOwner {
+        rewardToken.transferFrom(msg.sender, address(this), _amount);
+    }
+}`;
+
   // const SAMPLE_CONTRACT_CODE = `...`; // Commented out to avoid unused variables
 
 export default function InteractiveDemo() {
@@ -200,6 +312,23 @@ export default function InteractiveDemo() {
     }
     if (autoDemoStep === 12) {
       // Publish/Deploy highlight
+      return 'animate-pulse ring-2 ring-orange-400 shadow-[0_0_0_4px_rgba(249,115,22,0.15)]';
+    }
+    // Second scenario highlights
+    if (autoDemoStep === 19) {
+      // Review highlight
+      return 'animate-pulse ring-2 ring-blue-400 shadow-[0_0_0_4px_rgba(59,130,246,0.15)]';
+    }
+    if (autoDemoStep === 22) {
+      // Build highlight
+      return 'animate-pulse ring-2 ring-yellow-400 shadow-[0_0_0_4px_rgba(234,179,8,0.15)]';
+    }
+    if (autoDemoStep === 24) {
+      // Audit highlight
+      return 'animate-pulse ring-2 ring-blue-400 shadow-[0_0_0_4px_rgba(59,130,246,0.15)]';
+    }
+    if (autoDemoStep === 26) {
+      // Deploy highlight
       return 'animate-pulse ring-2 ring-orange-400 shadow-[0_0_0_4px_rgba(249,115,22,0.15)]';
     }
     return '';
@@ -545,10 +674,132 @@ export default function InteractiveDemo() {
     // End demo
     await new Promise(resolve => setTimeout(resolve, 2000));
     if (isAutoDemoLoop && !autoDemoStopRef.current) {
-      // loop again after short pause
+      // Start second scenario after short pause
+      setTimeout(() => {
+        if (!autoDemoStopRef.current) startSecondScenario();
+      }, 1500);
+    } else {
+      setIsAutoDemo(false);
+      setAutoDemoStep(0);
+    }
+  };
+
+  // Second scenario: User-provided contract
+  const startSecondScenario = async () => {
+    // Clear previous state but keep auto demo running
+    setDemoState(prev => ({
+      ...prev,
+      messages: [],
+      currentProject: null,
+      projects: [],
+      generatedCode: '',
+      credits: 1000
+    }));
+    setContractCode('');
+    setMobileActiveTab('chat');
+    setAutoDemoStep(15);
+
+    // Step 15: User asks about deployment
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (autoDemoStopRef.current) return;
+    addUserMessage("How can I deploy my smart contract that I wrote myself or found on the internet?");
+    setAutoDemoStep(16);
+
+    // Step 16: AI response
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    if (autoDemoStopRef.current) return;
+    addAIMessage("Great question! You can deploy any Solana smart contract using our platform. Simply paste your code into the editor, and I'll help you build, audit, and deploy it. Let me show you how!", false);
+    setAutoDemoStep(17);
+
+    // Step 17: Switch to code tab and show user contract
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (autoDemoStopRef.current) return;
+    setMobileActiveTab('code');
+    setContractCode(USER_CONTRACT_CODE);
+    setCodeSource('user-input');
+    addAIMessage("I've pasted your staking contract into the editor. Now let's review and deploy it!", false);
+    setAutoDemoStep(18);
+
+    // Step 18: Show Review button highlight
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    setAutoDemoStep(19);
+
+    // Step 19: Auto Review (with error)
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    setDemoState(prev => ({ ...prev, isReviewing: true }));
+    setMobileActiveTab('code');
+    setAutoDemoStep(20);
+
+    // Simulate review process with error detection
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    if (autoDemoStopRef.current) return;
+    addAIMessage("I found a potential security issue in your contract! The `addRewardTokens` function doesn't check if the contract has enough reward tokens before allowing withdrawals. Let me fix this automatically.", false);
+    setAutoDemoStep(21);
+
+    // Step 20: Show Build button highlight
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    setDemoState(prev => ({ ...prev, isReviewing: false }));
+    setAutoDemoStep(22);
+
+    // Step 21: Auto Build (with error)
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    setDemoState(prev => ({ ...prev, isBuilding: true }));
+    setMobileActiveTab('code');
+    setAutoDemoStep(23);
+
+    // Wait for build to complete
+    await waitFor(() => !demoStateRef.current.isBuilding);
+    if (autoDemoStopRef.current) return;
+
+    // Step 22: Show Audit button highlight
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    setAutoDemoStep(24);
+
+    // Step 23: Auto Audit (with error)
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    setDemoState(prev => ({ ...prev, isAuditing: true }));
+    setMobileActiveTab('code');
+    setAutoDemoStep(25);
+
+    // Wait for audit to complete
+    await waitFor(() => !demoStateRef.current.isAuditing);
+    if (autoDemoStopRef.current) return;
+
+    // Step 24: Show Deploy button highlight
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    setAutoDemoStep(26);
+
+    // Step 25: Auto Deploy
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    setDemoState(prev => ({ ...prev, isDeploying: true }));
+    setMobileActiveTab('code');
+    setAutoDemoStep(27);
+
+    // Wait for deploy to complete
+    await waitFor(() => !demoStateRef.current.isDeploying);
+    if (autoDemoStopRef.current) return;
+
+    // Final success message
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    addAIMessage("Perfect! Your staking contract has been successfully deployed to Solana. You can now use it to allow users to stake tokens and earn rewards. The contract is live and ready for users!", false);
+    setAutoDemoStep(28);
+
+    // End second scenario
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    if (isAutoDemoLoop && !autoDemoStopRef.current) {
+      // Start first scenario again
       setTimeout(() => {
         if (!autoDemoStopRef.current) startAutoDemo();
-      }, 1500);
+      }, 2000);
     } else {
       setIsAutoDemo(false);
       setAutoDemoStep(0);
