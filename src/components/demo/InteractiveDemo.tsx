@@ -1853,6 +1853,11 @@ export default function InteractiveDemo() {
                 placeholder="Describe your smart contract requirements..."
                 className={`flex-1 px-3 py-1.5 bg-[#191919] border border-[#333] rounded-lg text-white placeholder-[#666] focus:outline-none focus:border-orange-500 text-xs ${isTablet ? 'text-[9px] px-2 py-1' : ''}`}
                 disabled={demoState.isGenerating}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck="false"
+                inputMode="text"
               />
               <button
                 onClick={handleManualInput}
@@ -1929,6 +1934,7 @@ export default function InteractiveDemo() {
                 context={generationContext}
                 placeholder="Describe your smart contract requirements..."
                 isTablet={isTablet}
+                isAutoDemo={isAutoDemo}
               />
             )}
           </div>

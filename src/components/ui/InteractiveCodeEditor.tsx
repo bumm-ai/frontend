@@ -17,6 +17,7 @@ interface InteractiveCodeEditorProps {
   onAddAIMessage?: (message: string) => void;
   context?: string; // Context for determining contract type
   isTablet?: boolean;
+  isAutoDemo?: boolean; // For auto demo mode styling
 }
 
 export const InteractiveCodeEditor = ({ 
@@ -27,7 +28,8 @@ export const InteractiveCodeEditor = ({
   onGenerationComplete,
   onAddAIMessage,
   context,
-  isTablet = false
+  isTablet = false,
+  isAutoDemo = false
 }: InteractiveCodeEditorProps) => {
   const [code, setCode] = useState(initialCode);
   const [isEditing, setIsEditing] = useState(false);
@@ -242,11 +244,11 @@ pub mod my_contract {
                   onChange={(e) => handleCodeChange(e.target.value)}
                   onBlur={() => setIsEditing(false)}
                   placeholder={placeholder}
-                  className={`flex-1 w-full bg-transparent text-gray-300 font-mono text-[9px] resize-none focus:outline-none leading-relaxed overflow-x-hidden md:overflow-x-auto whitespace-pre-wrap m-0 p-0 border-0 ${isTablet ? 'text-[8px]' : ''}`}
+                  className={`flex-1 w-full bg-transparent text-gray-300 font-mono text-[9px] resize-none focus:outline-none leading-relaxed overflow-x-hidden md:overflow-x-auto whitespace-pre-wrap m-0 p-0 border-0 ${isTablet ? 'text-[8px]' : ''} ${isAutoDemo ? 'text-[7px] [word-break:break-all]' : ''}`}
                   autoFocus
                 />
               ) : (
-                <pre className={`flex-1 w-full font-mono text-[9px] text-gray-300 leading-relaxed whitespace-pre-wrap overflow-x-auto md:overflow-x-auto overflow-x-hidden m-0 ${isTablet ? 'text-[8px]' : ''}`}>
+                <pre className={`flex-1 w-full font-mono text-[9px] text-gray-300 leading-relaxed whitespace-pre-wrap overflow-x-auto md:overflow-x-auto overflow-x-hidden m-0 ${isTablet ? 'text-[8px]' : ''} ${isAutoDemo ? 'text-[7px] [word-break:break-all]' : ''}`}>
                   <code 
                     className="language-rust block w-full h-full"
                     dangerouslySetInnerHTML={{ 
