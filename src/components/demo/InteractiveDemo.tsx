@@ -70,115 +70,167 @@ const DEMO_STEPS = [
 ];
 
 // User-provided smart contract for second scenario
-const USER_CONTRACT_CODE = `// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+const USER_CONTRACT_CODE = `use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC20/IERC20.sol";
+// Your program address in Solana blockchain (generated on first build)
+declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 
-/**
- * @title SimpleStakingPool
- * @dev A simple contract where users can stake one ERC20 token to earn another.
- * This is a simplified educational example and is NOT production-ready.
- */
-contract SimpleStakingPool {
-    IERC20 public stakingToken;
-    IERC20 public rewardToken;
+#[program]
+pub mod simple_staking {
+    use super::*;
 
-    address public owner;
-
-    uint256 public rewardRate; // Amount of reward tokens per second
-    uint256 public lastUpdateTime;
-    uint256 public rewardPerTokenStored;
-
-    mapping(address => uint256) public stakedBalances;
-    mapping(address => uint256) public userRewardPerTokenPaid;
-    mapping(address => uint256) public rewards;
-
-    uint256 public totalStaked;
-
-    event Staked(address indexed user, uint256 amount);
-    event Withdrawn(address indexed user, uint256 amount);
-    event RewardPaid(address indexed user, uint256 reward);
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Not the owner");
-        _;
+    // Instruction to create a new pool
+    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        pool.mint = ctx.accounts.mint.key();
+        pool.vault = ctx.accounts.vault.key();
+        pool.authority = ctx.accounts.authority.key();
+        Ok(())
     }
 
-    modifier updateReward(address _user) {
-        rewardPerTokenStored = rewardPerToken();
-        lastUpdateTime = block.timestamp;
-        rewards[_user] = earned(_user);
-        userRewardPerTokenPaid[_user] = rewardPerTokenStored;
-        _;
+    // Instruction for staking (depositing) tokens
+    pub fn stake(ctx: Context<Stake>, amount: u64) -> Result<()> {
+        require!(amount > 0, StakingError::AmountMustBeGreaterThanZero);
+
+        // Create instruction for token transfer
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.user_token_account.to_account_info(),
+            to: ctx.accounts.vault.to_account_info(),
+            authority: ctx.accounts.user.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+
+        // Call token program to execute transfer
+        token::transfer(cpi_ctx, amount)?;
+
+        Ok(())
     }
 
-    constructor(address _stakingTokenAddress, address _rewardTokenAddress) {
-        owner = msg.sender;
-        stakingToken = IERC20(_stakingTokenAddress);
-        rewardToken = IERC20(_rewardTokenAddress);
+    // Instruction for withdrawing tokens
+    pub fn unstake(ctx: Context<Unstake>, amount: u64) -> Result<()> {
+        require!(amount > 0, StakingError::AmountMustBeGreaterThanZero);
+
+        // Define "seeds" for signing on behalf of program (PDA)
+        let seeds = b"pool_authority";
+        let bump = ctx.bumps.pool_authority;
+        let signer_seeds = &[&seeds[..], &[bump]];
+
+        // Create instruction for token transfer from program vault
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.vault.to_account_info(),
+            to: ctx.accounts.user_token_account.to_account_info(),
+            authority: ctx.accounts.pool_authority.to_account_info(),
+        };
+
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, &[&signer_seeds[..]]);
+        
+        // Call token program to execute transfer
+        token::transfer(cpi_ctx, amount)?;
+        
+        Ok(())
     }
+}
 
-    // --- Core Logic ---
+// --- Account Structures ---
 
-    function rewardPerToken() public view returns (uint256) {
-        if (totalStaked == 0) {
-            return rewardPerTokenStored;
-        }
-        return
-            rewardPerTokenStored +
-            (((block.timestamp - lastUpdateTime) * rewardRate * 1e18) /
-                totalStaked);
-    }
+#[derive(Accounts)]
+pub struct Initialize<'info> {
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + 32 + 32 + 32,
+        seeds = [b"pool"],
+        bump
+    )]
+    pub pool: Account<'info, Pool>,
+    
+    #[account(mut)]
+    pub mint: Account<'info, Mint>,
+    
+    #[account(
+        init,
+        payer = authority,
+        token::mint = mint,
+        token::authority = pool_authority,
+        seeds = [b"vault"],
+        bump
+    )]
+    pub vault: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    /// CHECK: This is safe because we derive it from seeds
+    #[account(
+        seeds = [b"pool_authority"],
+        bump
+    )]
+    pub pool_authority: UncheckedAccount<'info>,
+    
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
 
-    function earned(address _user) public view returns (uint256) {
-        return
-            ((stakedBalances[_user] *
-                (rewardPerToken() - userRewardPerTokenPaid[_user])) / 1e18) +
-            rewards[_user];
-    }
+#[derive(Accounts)]
+pub struct Stake<'info> {
+    #[account(mut)]
+    pub pool: Account<'info, Pool>,
+    
+    #[account(mut)]
+    pub vault: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    #[account(mut)]
+    pub user_token_account: Account<'info, TokenAccount>,
+    
+    pub token_program: Program<'info, Token>,
+}
 
-    // --- User Functions ---
+#[derive(Accounts)]
+pub struct Unstake<'info> {
+    #[account(mut)]
+    pub pool: Account<'info, Pool>,
+    
+    #[account(mut)]
+    pub vault: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    #[account(mut)]
+    pub user_token_account: Account<'info, TokenAccount>,
+    
+    /// CHECK: This is safe because we derive it from seeds
+    #[account(
+        seeds = [b"pool_authority"],
+        bump
+    )]
+    pub pool_authority: UncheckedAccount<'info>,
+    
+    pub token_program: Program<'info, Token>,
+}
 
-    function deposit(uint256 _amount) external updateReward(msg.sender) {
-        require(_amount > 0, "Amount must be greater than 0");
-        stakingToken.transferFrom(msg.sender, address(this), _amount);
-        stakedBalances[msg.sender] += _amount;
-        totalStaked += _amount;
-        emit Staked(msg.sender, _amount);
-    }
+// --- Data Structures ---
 
-    function withdraw(uint256 _amount) external updateReward(msg.sender) {
-        require(_amount > 0, "Amount must be greater than 0");
-        require(stakedBalances[msg.sender] >= _amount, "Insufficient balance");
-        stakingToken.transfer(msg.sender, _amount);
-        stakedBalances[msg.sender] -= _amount;
-        totalStaked -= _amount;
-        emit Withdrawn(msg.sender, _amount);
-    }
+#[account]
+pub struct Pool {
+    pub mint: Pubkey,
+    pub vault: Pubkey,
+    pub authority: Pubkey,
+}
 
-    function claimReward() external updateReward(msg.sender) {
-        uint256 reward = rewards[msg.sender];
-        if (reward > 0) {
-            rewards[msg.sender] = 0;
-            rewardToken.transfer(msg.sender, reward);
-            emit RewardPaid(msg.sender, reward);
-        }
-    }
+// --- Error Codes ---
 
-    // --- Admin Functions ---
-
-    function setRewardRate(uint256 _newRate) external onlyOwner {
-        // Before setting a new rate, update the rewards to the current point in time
-        rewardPerTokenStored = rewardPerToken();
-        lastUpdateTime = block.timestamp;
-        rewardRate = _newRate;
-    }
-
-    // Function to add reward tokens to the contract
-    function addRewardTokens(uint256 _amount) external onlyOwner {
-        rewardToken.transferFrom(msg.sender, address(this), _amount);
-    }
+#[error_code]
+pub enum StakingError {
+    #[msg("Amount must be greater than zero")]
+    AmountMustBeGreaterThanZero,
 }`;
 
   // const SAMPLE_CONTRACT_CODE = `...`; // Commented out to avoid unused variables
@@ -232,6 +284,7 @@ export default function InteractiveDemo() {
   const [isAutoDemoLoop, setIsAutoDemoLoop] = useState(true);
   const autoDemoStopRef = useRef<boolean>(false);
   const demoStateRef = useRef(demoState);
+  const [isEditorActivating, setIsEditorActivating] = useState(false);
   useEffect(() => { demoStateRef.current = demoState; }, [demoState]);
 
   // Wait helper that resolves when checkFn returns true, or aborts on stop/timeout
@@ -254,6 +307,76 @@ export default function InteractiveDemo() {
           return resolve();
         }
       }, intervalMs);
+    });
+  };
+
+  // Функция симуляции клика по редактору
+  const simulateEditorActivation = (): Promise<void> => {
+    return new Promise((resolve) => {
+      console.log('Activating editor...');
+      // Показываем анимацию активации
+      setIsEditorActivating(true);
+      
+      // Активируем редактор - показываем пустой редактор
+      setContractCode('');
+      console.log('Contract code cleared');
+      
+      // Перемонтируем компонент для активации
+      setDemoInstanceKey(prev => {
+        const newKey = prev + 1;
+        console.log('Demo instance key updated to:', newKey);
+        return newKey;
+      });
+      
+      // Убираем анимацию активации через 1 секунду
+      setTimeout(() => {
+        setIsEditorActivating(false);
+        console.log('Editor activated');
+        resolve();
+      }, 1000);
+    });
+  };
+
+  // Функция симуляции ручного ввода текста
+  const simulateManualTyping = (text: string, speed: number = 50): Promise<void> => {
+    return new Promise((resolve) => {
+      let currentIndex = 0;
+      let lastUpdateTime = 0;
+      console.log('Typing text:', text, 'Speed:', speed);
+
+      const typeInterval = setInterval(() => {
+        if (currentIndex < text.length && !autoDemoStopRef.current) {
+          const currentText = text.substring(0, currentIndex + 1);
+          const now = Date.now();
+          
+          // Update every 3 characters to reduce re-renders
+          if (currentIndex % 3 === 0 || currentIndex === text.length - 1) {
+            console.log('Typing character:', currentText[currentIndex], 'Current text:', currentText);
+            setContractCode(currentText);
+          }
+          
+          currentIndex++;
+        } else {
+          clearInterval(typeInterval);
+          // Ensure final update
+          setContractCode(text);
+          console.log('Typing completed');
+          resolve();
+        }
+      }, speed);
+    });
+  };
+
+  // Функция вставки оставшегося кода
+  const simulatePasteRemainingCode = (fullCode: string, typedCode: string): Promise<void> => {
+    return new Promise((resolve) => {
+      console.log('Pasting full code:', fullCode);
+      // Быстрая вставка с небольшой задержкой для реалистичности
+      setTimeout(() => {
+        setContractCode(fullCode);
+        console.log('Paste completed');
+        resolve();
+      }, 200);
     });
   };
 
@@ -611,8 +734,17 @@ export default function InteractiveDemo() {
       setGenerationContext('dex');
       await new Promise(resolve => setTimeout(resolve, 600));
       if (autoDemoStopRef.current) return;
+      
+      // Add 1 second delay before starting generation animation
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (autoDemoStopRef.current) return;
+      
       setDemoState(prev => ({ ...prev, isGenerating: true }));
-      // switch to Contract tab on mobile during generation
+      
+      // Wait for "Generating your contract now..." message to appear, then switch to Contract tab on mobile
+      // The message appears in addAIMessage, so we wait for it to be visible
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      if (autoDemoStopRef.current) return;
       setMobileActiveTab('code');
       generateCode();
       createProject();
@@ -672,12 +804,12 @@ export default function InteractiveDemo() {
     setAutoDemoStep(14);
 
     // End demo
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 3000));
     if (isAutoDemoLoop && !autoDemoStopRef.current) {
-      // Start second scenario after short pause
+      // Start second scenario after longer pause
       setTimeout(() => {
         if (!autoDemoStopRef.current) startSecondScenario();
-      }, 1500);
+      }, 3000);
     } else {
       setIsAutoDemo(false);
       setAutoDemoStep(0);
@@ -696,13 +828,19 @@ export default function InteractiveDemo() {
       credits: 1000
     }));
     setContractCode('');
+    setGenerationContext('');
+    setOriginalDeployedCode('');
+    // Force clear localStorage
+    clearSmartContractPreviewStorage();
+    // Force remount of editor
+    setDemoInstanceKey(prev => prev + 1);
     setMobileActiveTab('chat');
     setAutoDemoStep(15);
 
     // Step 15: User asks about deployment
     await new Promise(resolve => setTimeout(resolve, 1000));
     if (autoDemoStopRef.current) return;
-    addUserMessage("How can I deploy my smart contract that I wrote myself or found on the internet?");
+    addUserMessage("I have a smart contract I wrote. Can you help me deploy it?");
     setAutoDemoStep(16);
 
     // Step 16: AI response
@@ -711,13 +849,66 @@ export default function InteractiveDemo() {
     addAIMessage("Great question! You can deploy any Solana smart contract using our platform. Simply paste your code into the editor, and I'll help you build, audit, and deploy it. Let me show you how!", false);
     setAutoDemoStep(17);
 
-    // Step 17: Switch to code tab and show user contract
+    // Step 17: Show messages first, then switch to code tab
     await new Promise(resolve => setTimeout(resolve, 1000));
     if (autoDemoStopRef.current) return;
+    
+    // Show message about clicking on empty editor
+    addAIMessage("Click on the empty Smart Contract Preview area to open the editor...", false);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (autoDemoStopRef.current) return;
+    
+    // Simulate user clicking on empty editor (show placeholder text first)
+    addAIMessage("Now enter the code of your contract into the editor...", false);
+    await new Promise(resolve => setTimeout(resolve, 800));
+    if (autoDemoStopRef.current) return;
+    
+    // Wait longer to show the message completely, then switch to Contract tab
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
     setMobileActiveTab('code');
-    setContractCode(USER_CONTRACT_CODE);
+    
+    // Start with empty editor to show typing process
+    setContractCode('');
     setCodeSource('user-input');
-    addAIMessage("I've pasted your staking contract into the editor. Now let's review and deploy it!", false);
+    
+    // Show empty editor for a moment to simulate clicking
+    await new Promise(resolve => setTimeout(resolve, 200));
+    if (autoDemoStopRef.current) return;
+    
+    // Симулируем клик по редактору для активации
+    console.log('Starting editor activation...');
+    await simulateEditorActivation();
+    if (autoDemoStopRef.current) return;
+    
+    // Сразу начинаем ввод после активации
+    if (autoDemoStopRef.current) return;
+    
+    // Симулируем ручной ввод первых строк
+    const contractLines = USER_CONTRACT_CODE.split('\n');
+    const firstLines = contractLines.slice(0, 3).join('\n');
+    console.log('Starting manual typing...', firstLines);
+    await simulateManualTyping(firstLines, 60);
+    if (autoDemoStopRef.current) return;
+    
+    // Небольшая пауза (как будто пользователь думает)
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (autoDemoStopRef.current) return;
+    
+    // Вставляем оставшийся код
+    console.log('Pasting remaining code...');
+    await simulatePasteRemainingCode(USER_CONTRACT_CODE, firstLines);
+    
+    // Force remount of editor to apply auto-demo styles
+    setDemoInstanceKey(prev => prev + 1);
+    
+    // Set code source to user-input so Review button appears
+    setCodeSource('user-input');
+    
+    // Final message after contract is pasted
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (autoDemoStopRef.current) return;
+    addAIMessage("Great! I can see your Solana staking contract in the editor. Now let's review and deploy it!", false);
     setAutoDemoStep(18);
 
     // Step 18: Show Review button highlight
@@ -728,20 +919,53 @@ export default function InteractiveDemo() {
     // Step 19: Auto Review (with error)
     await new Promise(resolve => setTimeout(resolve, 2000));
     if (autoDemoStopRef.current) return;
-    setDemoState(prev => ({ ...prev, isReviewing: true }));
+    
+    // Call handleReview to properly set up the review process
+    handleReview();
     setMobileActiveTab('code');
     setAutoDemoStep(20);
+    
+    // Wait a moment to show Review button and "Reviewing..." status, then switch to AI Chat
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    setMobileActiveTab('chat');
 
     // Simulate review process with error detection
     await new Promise(resolve => setTimeout(resolve, 3000));
     if (autoDemoStopRef.current) return;
     addAIMessage("I found a potential security issue in your contract! The `addRewardTokens` function doesn't check if the contract has enough reward tokens before allowing withdrawals. Let me fix this automatically.", false);
     setAutoDemoStep(21);
-
-    // Step 20: Show Build button highlight
+    
+    // Wait 2 seconds after security issue message, then switch to Contract tab
     await new Promise(resolve => setTimeout(resolve, 2000));
     if (autoDemoStopRef.current) return;
-    setDemoState(prev => ({ ...prev, isReviewing: false }));
+    setMobileActiveTab('code');
+
+    // Step 20: Complete review and create project
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (autoDemoStopRef.current) return;
+    
+    // Create project to enable Build/Audit/Deploy buttons
+    const project = {
+      id: generateUniqueId(),
+      name: 'Solana Staking Contract',
+      description: 'A Solana staking contract for token rewards',
+      status: 'generated' as const,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    setDemoState(prev => ({
+      ...prev,
+      isReviewing: false,
+      currentProject: project,
+      projects: [...prev.projects, project],
+      // Ensure we have a project to show action buttons
+      hasProject: true
+    }));
+    
+    // Change source to ai-generated to show Build button (same as manual mode)
+    setCodeSource('ai-generated');
+    
     setAutoDemoStep(22);
 
     // Step 21: Auto Build (with error)
@@ -790,7 +1014,7 @@ export default function InteractiveDemo() {
     // Final success message
     await new Promise(resolve => setTimeout(resolve, 2000));
     if (autoDemoStopRef.current) return;
-    addAIMessage("Perfect! Your staking contract has been successfully deployed to Solana. You can now use it to allow users to stake tokens and earn rewards. The contract is live and ready for users!", false);
+    addAIMessage("Perfect! Your Solana staking contract has been successfully deployed. Users can now stake tokens and withdraw them through your program. The contract is live and ready for users!", false);
     setAutoDemoStep(28);
 
     // End second scenario
@@ -1620,6 +1844,16 @@ export default function InteractiveDemo() {
           
           {/* Code Content */}
           <div className="flex-1 overflow-y-auto bg-[#0a0a0a] p-4 relative min-h-0">
+            {/* Editor Activation Animation */}
+            {isEditorActivating && (
+              <div className="absolute inset-0 bg-[#0a0a0a] flex items-center justify-center z-10">
+                <div className="text-center">
+                  <div className="animate-pulse text-orange-500 text-sm mb-2">Activating editor...</div>
+                  <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                </div>
+              </div>
+            )}
+            
             {/* Animations replace InteractiveCodeEditor */}
             {demoState.isBuilding && (
               <BuildStages 
@@ -2153,7 +2387,17 @@ export default function InteractiveDemo() {
           </div>
           
           {/* Interactive Code Area */}
-          <div className="flex-1 p-2 min-h-0">
+          <div className="flex-1 p-2 min-h-0 relative">
+            {/* Editor Activation Animation */}
+            {isEditorActivating && (
+              <div className="absolute inset-0 bg-[#0A0A0A] flex items-center justify-center z-10">
+                <div className="text-center">
+                  <div className="animate-pulse text-orange-500 text-sm mb-2">Activating editor...</div>
+                  <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                </div>
+              </div>
+            )}
+            
             {demoState.isGenerating ? (
               <CodeGenerationStages 
                 onComplete={handleGenerationComplete}

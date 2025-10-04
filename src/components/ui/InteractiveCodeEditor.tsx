@@ -44,6 +44,17 @@ export const InteractiveCodeEditor = ({
     }
   }, [isGenerating, initialCode]);
 
+  // Update code when initialCode changes (for auto demo)
+  useEffect(() => {
+    if (initialCode !== undefined && initialCode !== code) {
+      setCode(initialCode);
+      if (initialCode.trim()) {
+        setSource('ai-generated');
+        onCodeChange(initialCode, 'ai-generated');
+      }
+    }
+  }, [initialCode]);
+
   useEffect(() => {
     // Initialize PrismJS on client side
     if (typeof window !== 'undefined') {
